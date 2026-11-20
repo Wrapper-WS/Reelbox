@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Centred Reelbox play mark in accent colour (#FF5A36) inside the splash safe circle -->
+    <path
+        android:fillColor="#FF5A36"
+        android:pathData="M45.2,37.8C43.2,36.6 40.7,38.0 40.7,40.3V67.7C40.7,70.0 43.2,71.4 45.2,70.2L68.4,56.5C70.3,55.4 70.3,52.6 68.4,51.5L45.2,37.8Z" />
+</vector>

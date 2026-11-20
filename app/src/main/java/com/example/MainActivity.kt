@@ -1,0 +1,32 @@
+package com.example
+
+import android.graphics.Color
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.ReelboxApp
+import com.example.ui.ReelboxViewModel
+import com.example.ui.theme.ReelboxTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
+        setContent {
+            ReelboxTheme {
+                val viewModel: ReelboxViewModel = viewModel(
+                    factory = ReelboxViewModel.Factory(application),
+                )
+                ReelboxApp(viewModel = viewModel)
+            }
+        }
+    }
+}

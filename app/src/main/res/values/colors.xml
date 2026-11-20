@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="reelbox_background">#0B0B0D</color>
+    <color name="reelbox_surface">#151518</color>
+    <color name="reelbox_accent">#FF5A36</color>
+</resources>

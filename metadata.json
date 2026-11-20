@@ -1,0 +1,6 @@
+{
+  "name": "Reelbox",
+  "description": "A calm, cinematic offline vertical video and photo gallery for media saved on your phone.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

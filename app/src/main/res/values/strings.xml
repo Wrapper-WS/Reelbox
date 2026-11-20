@@ -1,0 +1,89 @@
+<resources>
+    <string name="app_name">Reelbox</string>
+
+    <!-- Navigation tabs -->
+    <string name="nav_home">Home</string>
+    <string name="nav_favourites">Favourites</string>
+    <string name="nav_photos">Photos</string>
+    <string name="nav_videos">Videos</string>
+
+    <!-- Permission screen -->
+    <string name="permission_illustration_description">Stacked video and photo frames illustration</string>
+    <string name="permission_title">Let\'s find your videos</string>
+    <string name="permission_subtitle">Reelbox plays the videos and photos already on your phone, right where they are.</string>
+    <string name="permission_button_allow">Allow access</string>
+    <string name="permission_denied_note">Access is turned off right now. You can turn it on anytime in your phone settings.</string>
+    <string name="permission_button_settings">Open settings</string>
+    <string name="permission_privacy_note">Everything stays on your phone</string>
+
+    <!-- Partial access banner (Android 14 selected access) -->
+    <string name="partial_access_message">Showing only the items you picked</string>
+    <string name="partial_access_action">Choose more</string>
+    <string name="action_choose_more_description">Choose more photos and videos</string>
+
+    <!-- Loading state -->
+    <string name="loading_library">Finding your moments…</string>
+
+    <!-- Empty states -->
+    <string name="empty_favourites_title">No favourites yet</string>
+    <string name="empty_favourites_subtitle">Tap the heart on any video or photo and it will show up here.</string>
+
+    <string name="empty_photos_title">No photos yet</string>
+    <string name="empty_photos_subtitle">Photos saved on your phone will appear right here.</string>
+
+    <string name="empty_videos_title">No videos yet</string>
+    <string name="empty_videos_subtitle">Videos saved on your phone will appear right here.</string>
+
+    <!-- Home feed & full-screen viewer -->
+    <string name="feed_tab_videos">Videos</string>
+    <string name="feed_tab_images">Images</string>
+    <string name="feed_video_error">This video can\'t be played</string>
+    <string name="feed_video_deleted">Video deleted</string>
+    <string name="feed_photo_deleted">Photo deleted</string>
+    <string name="feed_share_title">Share with</string>
+    <string name="feed_action_favourite">Favourite</string>
+    <string name="feed_action_remove_favourite">Remove from favourites</string>
+    <string name="feed_action_share">Share</string>
+    <string name="feed_action_delete">Delete</string>
+    <string name="feed_action_mute">Mute sound</string>
+    <string name="feed_action_unmute">Unmute sound</string>
+    <string name="feed_delete_video_title">Delete this video?</string>
+    <string name="feed_delete_photo_title">Delete this photo?</string>
+    <string name="feed_delete_body">This will remove it from your phone.</string>
+    <string name="feed_delete_cancel">Cancel</string>
+    <string name="feed_delete_confirm">Delete</string>
+    <string name="feed_untitled_video">Video</string>
+    <string name="feed_untitled_photo">Photo</string>
+    <string name="feed_full_screen">Full screen</string>
+    <string name="feed_exit_full_screen">Exit full screen</string>
+    <string name="feed_speed_2x">2x speed</string>
+    <string name="feed_control_previous">Previous</string>
+    <string name="feed_control_next">Next</string>
+    <string name="feed_control_play">Play</string>
+    <string name="feed_control_pause">Pause</string>
+    <string name="share_sheet_title">Share to</string>
+    <string name="share_sheet_more">More</string>
+
+    <!-- Photos & Videos grids and Folders sheet -->
+    <string name="folders_sheet_title">Folders</string>
+    <string name="folders_all_photos">All photos</string>
+    <string name="folders_all_videos">All videos</string>
+    <string name="action_open_folders">Choose folder</string>
+    <string name="action_back">Back</string>
+    <string name="label_selected">Selected</string>
+    <string name="label_favourited">Favourited</string>
+
+    <!-- Plurals for friendly counts -->
+    <plurals name="count_videos">
+        <item quantity="one">%d video</item>
+        <item quantity="other">%d videos</item>
+    </plurals>
+    <plurals name="count_photos">
+        <item quantity="one">%d photo</item>
+        <item quantity="other">%d photos</item>
+    </plurals>
+    <plurals name="count_favourites">
+        <item quantity="one">%d favourite</item>
+        <item quantity="other">%d favourites</item>
+    </plurals>
+</resources>

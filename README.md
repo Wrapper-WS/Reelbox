@@ -2,7 +2,7 @@
 
 A video and photo gallery that plays what is already on your phone, with the smooth swipe feel of short video apps. Works fully offline.
 
-**[Download for Android](https://github.com/Wrapper-WS/Tiktok-gallery/releases/latest/download/Reelbox.apk)**
+**[Download for Android](https://github.com/Wrapper-WS/Reelbox/releases/latest/download/Reelbox.apk)**
 
 ## What it does
 

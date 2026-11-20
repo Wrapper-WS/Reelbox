@@ -2,46 +2,130 @@ name: Build Debug APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-apk:
+    name: Build & Publish Reelbox Debug APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'temurin'
+          cache: gradle
 
-      - name: Generate debug.keystore & Build APK
+      - name: Locate Android Gradle project
+        id: find_project
+        shell: bash
         run: |
-          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            SUBDIR=$(find . -maxdepth 2 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -printf "%h\n" | head -n 1)
-            if [ -n "$SUBDIR" ]; then cd "$SUBDIR"; fi
+          SETTINGS_FILE=$(find . -maxdepth 3 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -not -path "*/.*" | sort | head -n 1)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::Could not find settings.gradle or settings.gradle.kts within 2 levels of repository root."
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "Found Gradle project in: $PROJECT_DIR"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure debug.keystore exists
+        working-directory: ${{ steps.find_project.outputs.project_dir }}
+        shell: bash
+        run: |
+          if [ -f "debug.keystore" ]; then
+            echo "Using existing debug.keystore."
+          elif [ -f "debug.keystore.base64" ]; then
+            echo "Decoding committed debug.keystore.base64 to debug.keystore for consistent signing."
+            base64 --decode debug.keystore.base64 > debug.keystore
+          else
+            echo "No debug.keystore found; generating a new debug.keystore."
+            keytool -genkey -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          if [ ! -f "debug.keystore" ]; then
-            keytool -genkey -v -keystore debug.keystore \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+      - name: Build Debug APK
+        working-directory: ${{ steps.find_project.outputs.project_dir }}
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           fi
 
           if [ -f "./gradlew" ]; then
             chmod +x gradlew
             ./gradlew assembleDebug
+          elif [ -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+            DIST_URL=$(grep -E '^distributionUrl=' gradle/wrapper/gradle-wrapper.properties | cut -d'=' -f2- | sed 's/\\:/:/g' | tr -d '\r')
+            if [ -n "$DIST_URL" ]; then
+              echo "gradlew not found; provisioning Gradle from $DIST_URL"
+              GRADLE_DIR="$HOME/.gradle-dist"
+              mkdir -p "$GRADLE_DIR"
+              curl -fsSL "$DIST_URL" -o "$GRADLE_DIR/gradle.zip"
+              unzip -qo "$GRADLE_DIR/gradle.zip" -d "$GRADLE_DIR"
+              GRADLE_BIN=$(find "$GRADLE_DIR" -maxdepth 3 -type f -path "*/bin/gradle" | head -n 1)
+              if [ -n "$GRADLE_BIN" ]; then
+                "$GRADLE_BIN" assembleDebug
+              else
+                gradle assembleDebug
+              fi
+            else
+              gradle assembleDebug
+            fi
           else
             gradle assembleDebug
           fi
 
-      - name: Upload APK
+      - name: Rename APK to Reelbox-debug.apk
+        shell: bash
+        run: |
+          PROJECT_DIR="${{ steps.find_project.outputs.project_dir }}"
+          APK_PATH=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 2 -type f -name "*.apk" | sort | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No debug APK found under $PROJECT_DIR/app/build/outputs/apk/debug"
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$APK_PATH" dist/Reelbox-debug.apk
+          echo "Prepared dist/Reelbox-debug.apk from $APK_PATH"
+
+      - name: Upload APK workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: "**/build/outputs/apk/debug/*.apk"
+          path: dist/Reelbox-debug.apk
+          if-no-files-found: error
+
+      - name: Publish APK to latest GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            gh release delete latest --yes --cleanup-tag
+          fi
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" >/dev/null 2>&1 || true
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          gh release create latest "dist/Reelbox-debug.apk" \
+            --target "$GITHUB_SHA" \
+            --title "Reelbox Latest Debug APK" \
+            --notes "Automated debug APK build from commit \`${SHORT_SHA}\`. Download **Reelbox-debug.apk** below to install on Android." \
+            --latest

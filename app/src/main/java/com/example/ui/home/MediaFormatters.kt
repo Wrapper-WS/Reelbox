@@ -71,9 +71,39 @@ object MediaFormatters {
             .joinToString(separator = " · ")
     }
 
+    private val MEDIA_FILE_EXTENSIONS = setOf(
+        // Video extensions
+        "mp4", "m4v", "mkv", "mov", "webm", "avi", "wmv", "flv", "f4v",
+        "3gp", "3gpp", "3g2", "ts", "mts", "m2ts", "mpg", "mpeg", "mpe",
+        "ogv", "ogg", "vob", "mxf", "qt", "divx", "asf", "rm", "rmvb",
+        // Image extensions
+        "jpg", "jpeg", "jpe", "jfif", "png", "webp", "gif", "heic", "heif",
+        "avif", "bmp", "dib", "tif", "tiff", "dng", "raw", "cr2", "cr3",
+        "nef", "arw", "orf", "rw2", "pef", "srw", "jxl", "jp2", "svg", "ico",
+    )
+
+    private val WHITESPACE_AND_UNDERSCORES = Regex("[\\r\\n\\t_ ]+")
+
     fun sanitizeFileName(rawName: String): String {
-        return rawName
+        val trimmed = rawName
             .replace(Regex("[\\r\\n\\t]+"), " ")
+            .trim()
+        if (trimmed.isEmpty()) return ""
+
+        val lastDot = trimmed.lastIndexOf('.')
+        val withoutExtension = if (lastDot > 0 && lastDot < trimmed.lastIndex) {
+            val candidateExt = trimmed.substring(lastDot + 1).lowercase(Locale.ROOT)
+            if (candidateExt in MEDIA_FILE_EXTENSIONS) {
+                trimmed.substring(0, lastDot)
+            } else {
+                trimmed
+            }
+        } else {
+            trimmed
+        }
+
+        return withoutExtension
+            .replace(WHITESPACE_AND_UNDERSCORES, " ")
             .trim()
     }
 

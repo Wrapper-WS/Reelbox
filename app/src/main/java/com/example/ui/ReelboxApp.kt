@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -85,12 +86,25 @@ fun ReelboxApp(
     val colors = ReelboxThemeTokens.colors
 
     var isFullScreenLandscape by rememberSaveable { mutableStateOf(false) }
+    var isClearMode by rememberSaveable { mutableStateOf(false) }
     var launchSplashFinished by rememberSaveable { mutableStateOf(false) }
 
-    // Keep all non-fullscreen screens locked to portrait; switch to immersive landscape only when requested.
-    LaunchedEffect(activity, isFullScreenLandscape, uiState.hasMediaAccess) {
+    val setFullScreenLandscape: (Boolean) -> Unit = { enabled ->
+        if (enabled) {
+            isClearMode = false
+        }
+        isFullScreenLandscape = enabled
+    }
+
+    val setClearMode: (Boolean) -> Unit = { enabled ->
+        isClearMode = if (isFullScreenLandscape) false else enabled
+    }
+
+    // Keep all non-fullscreen screens locked to portrait; control status/system bars for landscape and clear mode.
+    LaunchedEffect(activity, isFullScreenLandscape, isClearMode, uiState.hasMediaAccess) {
         val hostActivity = activity ?: return@LaunchedEffect
         val immersiveLandscape = isFullScreenLandscape && uiState.hasMediaAccess
+        val portraitClearMode = !immersiveLandscape && isClearMode && uiState.hasMediaAccess
         val targetOrientation = if (immersiveLandscape) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
@@ -106,16 +120,20 @@ fun ReelboxApp(
         )
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (immersiveLandscape) {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
+        when {
+            immersiveLandscape -> controller.hide(WindowInsetsCompat.Type.systemBars())
+            portraitClearMode -> {
+                controller.hide(WindowInsetsCompat.Type.statusBars())
+                controller.show(WindowInsetsCompat.Type.navigationBars())
+            }
+            else -> controller.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
     DisposableEffect(activity) {
         onDispose {
             activity?.let { hostActivity ->
+                hostActivity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 val controller = WindowCompat.getInsetsController(
                     hostActivity.window,
                     hostActivity.window.decorView,
@@ -167,6 +185,11 @@ fun ReelboxApp(
         )
     }
 
+    // Clear mode turns off whenever the user leaves the app.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        isClearMode = false
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -192,6 +215,7 @@ fun ReelboxApp(
                 MediaPermissionState.PERMANENTLY_DENIED,
                 -> {
                     isFullScreenLandscape = false
+                    isClearMode = false
                     PermissionScreen(
                         isPermanentlyDenied = permissionState == MediaPermissionState.PERMANENTLY_DENIED,
                         onAllowAccess = requestMediaAccess,
@@ -205,7 +229,10 @@ fun ReelboxApp(
                     ReelboxMainShell(
                         uiState = uiState,
                         isFullScreenLandscape = isFullScreenLandscape,
-                        onSetFullScreenLandscape = { isFullScreenLandscape = it },
+                        isClearMode = isClearMode,
+                        onSetFullScreenLandscape = setFullScreenLandscape,
+                        onSetClearMode = setClearMode,
+                        onMarkClearModeHintSeen = viewModel::markClearModeHintSeen,
                         onChooseMoreMedia = requestMediaAccess,
                         onToggleFavourite = viewModel::toggleFavourite,
                         onSetFavourite = viewModel::setFavourite,
@@ -286,7 +313,10 @@ private fun ReelboxLaunchOverlay(
 private fun ReelboxMainShell(
     uiState: ReelboxUiState,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     onSetFullScreenLandscape: (Boolean) -> Unit,
+    onSetClearMode: (Boolean) -> Unit,
+    onMarkClearModeHintSeen: () -> Unit,
     onChooseMoreMedia: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
@@ -302,18 +332,24 @@ private fun ReelboxMainShell(
 
     var activeViewerSession by remember { mutableStateOf<MediaViewerSession?>(null) }
 
-    // Guarantee all tabs other than Home (unless viewing an opened video item) remain locked to portrait.
+    // Guarantee all tabs other than Home (unless viewing an opened video item) remain locked to portrait,
+    // and clear mode turns off if leaving the viewer/Home feed.
     LaunchedEffect(currentRoute, activeViewerSession) {
         val landscapeAllowed = currentRoute == ROUTE_HOME ||
             activeViewerSession?.mediaType == MediaType.VIDEO
         if (!landscapeAllowed && isFullScreenLandscape) {
             onSetFullScreenLandscape(false)
         }
+        val clearModeAllowed = currentRoute == ROUTE_HOME || activeViewerSession != null
+        if (!clearModeAllowed && isClearMode) {
+            onSetClearMode(false)
+        }
     }
 
     val navigateToTab: (ReelboxTab) -> Unit = { tab ->
         if (currentRoute != tab.route) {
             activeViewerSession = null
+            onSetClearMode(false)
             if (tab != ReelboxTab.HOME && isFullScreenLandscape) {
                 onSetFullScreenLandscape(false)
             }
@@ -342,7 +378,11 @@ private fun ReelboxMainShell(
                 containerColor = colors.background,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
-                    if (!isFullScreenLandscape && !useNavigationRail) {
+                    AnimatedVisibility(
+                        visible = !isFullScreenLandscape && !useNavigationRail && !isClearMode,
+                        enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                        exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                    ) {
                         ReelboxBottomBar(
                             currentRoute = currentRoute,
                             onSelectTab = navigateToTab,
@@ -355,7 +395,11 @@ private fun ReelboxMainShell(
                         .fillMaxSize()
                         .padding(innerPadding),
                 ) {
-                    if (useNavigationRail) {
+                    AnimatedVisibility(
+                        visible = useNavigationRail && !isClearMode,
+                        enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                        exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                    ) {
                         ReelboxNavigationRail(
                             currentRoute = currentRoute,
                             onSelectTab = navigateToTab,
@@ -365,7 +409,10 @@ private fun ReelboxMainShell(
                         navController = navController,
                         uiState = uiState,
                         isFullScreenLandscape = isFullScreenLandscape && activeViewerSession == null,
+                        isClearMode = isClearMode && activeViewerSession == null,
                         onSetFullScreenLandscape = onSetFullScreenLandscape,
+                        onSetClearMode = onSetClearMode,
+                        onMarkClearModeHintSeen = onMarkClearModeHintSeen,
                         onChooseMoreMedia = onChooseMoreMedia,
                         onToggleFavourite = onToggleFavourite,
                         onSetFavourite = onSetFavourite,
@@ -395,8 +442,12 @@ private fun ReelboxMainShell(
                     session = session,
                     uiState = uiState,
                     isFullScreenLandscape = isFullScreenLandscape,
+                    isClearMode = isClearMode,
                     onSetFullScreenLandscape = onSetFullScreenLandscape,
+                    onSetClearMode = onSetClearMode,
+                    onMarkClearModeHintSeen = onMarkClearModeHintSeen,
                     onClose = {
+                        onSetClearMode(false)
                         onSetFullScreenLandscape(false)
                         activeViewerSession = null
                     },
@@ -415,7 +466,10 @@ private fun ReelboxTabNavHost(
     navController: androidx.navigation.NavHostController,
     uiState: ReelboxUiState,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     onSetFullScreenLandscape: (Boolean) -> Unit,
+    onSetClearMode: (Boolean) -> Unit,
+    onMarkClearModeHintSeen: () -> Unit,
     onChooseMoreMedia: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
@@ -439,7 +493,10 @@ private fun ReelboxTabNavHost(
             HomeFeedScreen(
                 uiState = uiState,
                 isFullScreenLandscape = isFullScreenLandscape,
+                isClearMode = isClearMode,
                 onSetFullScreenLandscape = onSetFullScreenLandscape,
+                onSetClearMode = onSetClearMode,
+                onMarkClearModeHintSeen = onMarkClearModeHintSeen,
                 onToggleFavourite = onToggleFavourite,
                 onSetFavourite = onSetFavourite,
                 onToggleMute = onToggleMute,

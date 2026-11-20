@@ -1,4 +1,4 @@
-name: Build Debug APK
+name: Build Reelbox APK
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build & Publish Reelbox Debug APK
+    name: Build & Publish Reelbox APK
     runs-on: ubuntu-latest
 
     steps:
@@ -61,7 +61,7 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Debug APK
+      - name: Build APK
         working-directory: ${{ steps.find_project.outputs.project_dir }}
         shell: bash
         run: |
@@ -93,27 +93,92 @@ jobs:
             gradle assembleDebug
           fi
 
-      - name: Rename APK to Reelbox-debug.apk
+      - name: Prepare Reelbox.apk and release notes
+        id: release_meta
         shell: bash
         run: |
           PROJECT_DIR="${{ steps.find_project.outputs.project_dir }}"
           APK_PATH=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -maxdepth 2 -type f -name "*.apk" | sort | head -n 1)
           if [ -z "$APK_PATH" ]; then
-            echo "::error::No debug APK found under $PROJECT_DIR/app/build/outputs/apk/debug"
+            echo "::error::No built APK found under $PROJECT_DIR/app/build/outputs/apk/debug"
             exit 1
           fi
-          mkdir -p dist
-          cp "$APK_PATH" dist/Reelbox-debug.apk
-          echo "Prepared dist/Reelbox-debug.apk from $APK_PATH"
 
-      - name: Upload APK workflow artifact
+          mkdir -p dist
+          cp "$APK_PATH" dist/Reelbox.apk
+          echo "Prepared dist/Reelbox.apk from $APK_PATH"
+
+          GRADLE_FILE=""
+          if [ -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            GRADLE_FILE="$PROJECT_DIR/app/build.gradle.kts"
+          elif [ -f "$PROJECT_DIR/app/build.gradle" ]; then
+            GRADLE_FILE="$PROJECT_DIR/app/build.gradle"
+          fi
+
+          VERSION_NAME=""
+          if [ -n "$GRADLE_FILE" ]; then
+            VERSION_NAME=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=?[[:space:]]*["'\'']([^"'\'']+)["'\''].*/\1/p' "$GRADLE_FILE" | head -n 1)
+          fi
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="1.0"
+          fi
+
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          APK_BYTES=$(stat -c%s dist/Reelbox.apk)
+          APK_SIZE_MB=$(awk -v bytes="$APK_BYTES" 'BEGIN { printf "%.1f MB", bytes / 1048576 }')
+          RELEASE_DATE=$(LC_ALL=C date -u +"%-d %B %Y")
+
+          RAW_COMMIT_MSG=$(git log -1 --pretty=%s 2>/dev/null | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+          LOWER_MSG=$(printf '%s' "$RAW_COMMIT_MSG" | tr '[:upper:]' '[:lower:]')
+          if [ -z "$RAW_COMMIT_MSG" ] \
+            || printf '%s' "$LOWER_MSG" | grep -Eq '^(update(d)?([[:space:]]+(from[[:space:]]+ai[[:space:]]+studio|files?|app|code|repo|repository|project|readme(\.md)?))?|sync([[:space:]]+from[[:space:]]+ai[[:space:]]+studio)?|initial[[:space:]]+commit|first[[:space:]]+commit|wip|changes|minor[[:space:]]+changes|fixes|fix|commit|merge[[:space:]]+.*)$' \
+            || printf '%s' "$LOWER_MSG" | grep -Eq 'debug'; then
+            WHATS_NEW="Improvements and fixes."
+          else
+            WHATS_NEW="$RAW_COMMIT_MSG"
+          fi
+
+          cat <<EOF > dist/release-notes.md
+          # Reelbox
+
+          A video and photo gallery that plays what is already on your phone, with the smooth swipe feel of short video apps. Works fully offline.
+
+          ## Download
+
+          **Reelbox.apk (${APK_SIZE_MB}), version ${VERSION_NAME}, build ${BUILD_NUMBER}, released ${RELEASE_DATE}.**
+
+          ## What's new
+
+          - ${WHATS_NEW}
+
+          ## How to install
+
+          1. Download Reelbox.apk on your Android phone.
+          2. Open the file. If Android asks, allow installs from this source.
+          3. Open Reelbox and allow access to your videos and photos.
+
+          ## Good to know
+
+          - Reelbox works fully offline. It does not need the internet, and nothing leaves your phone.
+          - This is an early version. If something does not work well, please open an issue on this page.
+
+          ---
+
+          Built by Wrapper Web Studio.
+          EOF
+
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          cat dist/release-notes.md
+
+      - name: Upload Reelbox artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: dist/Reelbox-debug.apk
+          name: Reelbox
+          path: dist/Reelbox.apk
           if-no-files-found: error
 
-      - name: Publish APK to latest GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -123,9 +188,11 @@ jobs:
           fi
           gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" >/dev/null 2>&1 || true
 
-          SHORT_SHA="${GITHUB_SHA::7}"
-          gh release create latest "dist/Reelbox-debug.apk" \
+          VERSION_NAME="${{ steps.release_meta.outputs.version_name }}"
+          BUILD_NUMBER="${{ steps.release_meta.outputs.build_number }}"
+
+          gh release create latest "dist/Reelbox.apk" \
             --target "$GITHUB_SHA" \
-            --title "Reelbox Latest Debug APK" \
-            --notes "Automated debug APK build from commit \`${SHORT_SHA}\`. Download **Reelbox-debug.apk** below to install on Android." \
+            --title "Reelbox ${VERSION_NAME} (build ${BUILD_NUMBER})" \
+            --notes-file dist/release-notes.md \
             --latest

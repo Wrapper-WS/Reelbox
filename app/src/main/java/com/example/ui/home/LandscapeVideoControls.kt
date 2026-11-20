@@ -72,6 +72,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -184,6 +185,7 @@ fun SpeedHoldBadge(
 @Composable
 fun LandscapeVideoControls(
     visible: Boolean,
+    title: String,
     isPlaying: Boolean,
     positionMs: Long,
     durationMs: Long,
@@ -244,30 +246,50 @@ fun LandscapeVideoControls(
                 .fillMaxSize()
                 .testTag("landscape_video_controls"),
         ) {
-            // Soft top dark gradient scrim
+            // Soft top dark gradient scrim for Exit button and filename readability
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(96.dp)
+                    .height(112.dp)
                     .align(Alignment.TopCenter)
                     .background(ReelboxGradients.TopOverlayScrim),
             )
 
-            // Top-left round "Exit full screen" button
-            LandscapeRoundButton(
-                icon = Icons.Outlined.FullscreenExit,
-                contentDescription = stringResource(R.string.feed_exit_full_screen),
-                tint = colors.textPrimary,
-                onClick = {
-                    onUserInteraction()
-                    onExitFullScreen()
-                },
-                testTag = "landscape_exit_full_screen",
+            // Top row: round "Exit full screen" button + vertically centred file name (up to 2 lines)
+            Row(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .align(Alignment.TopStart)
                     .displayCutoutPadding()
-                    .padding(start = spacing.lg, top = spacing.md),
-            )
+                    .padding(
+                        start = spacing.lg,
+                        end = 24.dp,
+                        top = spacing.md,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            ) {
+                LandscapeRoundButton(
+                    icon = Icons.Outlined.FullscreenExit,
+                    contentDescription = stringResource(R.string.feed_exit_full_screen),
+                    tint = colors.textPrimary,
+                    onClick = {
+                        onUserInteraction()
+                        onExitFullScreen()
+                    },
+                    testTag = "landscape_exit_full_screen",
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("landscape_video_title"),
+                )
+            }
 
             // Bottom soft dark gradient + progress bar + single horizontal control row
             Box(

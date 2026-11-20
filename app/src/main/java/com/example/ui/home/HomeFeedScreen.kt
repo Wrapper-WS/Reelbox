@@ -1,12 +1,17 @@
 package com.example.ui.home
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.PagerDefaults
@@ -25,15 +31,14 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Videocam
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,7 +73,10 @@ import kotlinx.coroutines.launch
 fun HomeFeedScreen(
     uiState: ReelboxUiState,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     onSetFullScreenLandscape: (Boolean) -> Unit,
+    onSetClearMode: (Boolean) -> Unit,
+    onMarkClearModeHintSeen: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
     onToggleMute: () -> Unit,
@@ -77,27 +85,75 @@ fun HomeFeedScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val colors = ReelboxThemeTokens.colors
     val spacing = ReelboxThemeTokens.spacing
 
     var feedMode by rememberSaveable { mutableStateOf(HomeFeedMode.VIDEOS) }
+    var confirmDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var pendingDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
-    var legacyConfirmDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var deletedToastMessage by remember { mutableStateOf<String?>(null) }
     var shareSheetItem by remember { mutableStateOf<MediaItem?>(null) }
 
+    var clearModeRestoreVisible by remember { mutableStateOf(false) }
+    var clearModeRestoreTick by remember { mutableIntStateOf(0) }
+    var showFirstTimeClearHint by remember { mutableStateOf(false) }
+
     val videoDeletedMessage = stringResource(R.string.feed_video_deleted)
     val photoDeletedMessage = stringResource(R.string.feed_photo_deleted)
+
+    val enterClearMode: () -> Unit = {
+        onSetClearMode(true)
+        if (!uiState.hasSeenClearModeHint) {
+            showFirstTimeClearHint = true
+            onMarkClearModeHintSeen()
+        }
+    }
 
     // System Back in full-screen landscape returns smoothly to portrait on the same video.
     BackHandler(enabled = isFullScreenLandscape) {
         onSetFullScreenLandscape(false)
     }
 
+    // System Back in clear mode exits clear mode and restores all buttons.
+    BackHandler(enabled = !isFullScreenLandscape && isClearMode) {
+        onSetClearMode(false)
+    }
+
     // If all videos are deleted while in landscape, return gracefully to portrait empty state.
     LaunchedEffect(uiState.videos.isEmpty(), feedMode, isFullScreenLandscape) {
         if (isFullScreenLandscape && (feedMode != HomeFeedMode.VIDEOS || uiState.videos.isEmpty())) {
             onSetFullScreenLandscape(false)
+        }
+    }
+
+    // Exit clear mode if the active feed becomes empty.
+    LaunchedEffect(uiState.videos.isEmpty(), uiState.photos.isEmpty(), feedMode, isClearMode) {
+        val activeEmpty = when (feedMode) {
+            HomeFeedMode.VIDEOS -> uiState.videos.isEmpty()
+            HomeFeedMode.IMAGES -> uiState.photos.isEmpty()
+        }
+        if (isClearMode && activeEmpty) {
+            onSetClearMode(false)
+        }
+    }
+
+    // Briefly show the bottom-right eye button for 2 seconds after any screen tap in clear mode.
+    LaunchedEffect(isClearMode, clearModeRestoreTick) {
+        if (!isClearMode || clearModeRestoreTick == 0) {
+            clearModeRestoreVisible = false
+            return@LaunchedEffect
+        }
+        clearModeRestoreVisible = true
+        delay(2_000L)
+        clearModeRestoreVisible = false
+    }
+
+    // Auto-dismiss the one-time clear mode hint message.
+    LaunchedEffect(isClearMode, showFirstTimeClearHint) {
+        if (!isClearMode) {
+            showFirstTimeClearHint = false
+        } else if (showFirstTimeClearHint) {
+            delay(3_000L)
+            showFirstTimeClearHint = false
         }
     }
 
@@ -132,8 +188,15 @@ fun HomeFeedScreen(
     }
 
     val requestDeleteItem: (MediaItem) -> Unit = { item ->
+        if (confirmDeleteItem == null && pendingDeleteItem == null) {
+            confirmDeleteItem = item
+        }
+    }
+
+    val executeConfirmedDelete: (MediaItem) -> Unit = { item ->
         when (val outcome = MediaFormatters.prepareDeleteRequest(context, item)) {
             DeleteRequestResult.DeletedDirectly -> {
+                confirmDeleteItem = null
                 onMediaDeleted(item.id)
                 deletedToastMessage = if (item.type == MediaType.VIDEO) {
                     videoDeletedMessage
@@ -144,16 +207,27 @@ fun HomeFeedScreen(
 
             is DeleteRequestResult.NeedsSystemConfirmation -> {
                 pendingDeleteItem = item
+                confirmDeleteItem = null
                 val request = IntentSenderRequest.Builder(outcome.intentSender).build()
                 runCatching { deleteResultLauncher.launch(request) }
                     .onFailure { pendingDeleteItem = null }
             }
 
             DeleteRequestResult.NeedsLegacyConfirmation -> {
-                legacyConfirmDeleteItem = item
+                confirmDeleteItem = null
+                if (MediaFormatters.deleteDirectly(context, item)) {
+                    onMediaDeleted(item.id)
+                    deletedToastMessage = if (item.type == MediaType.VIDEO) {
+                        videoDeletedMessage
+                    } else {
+                        photoDeletedMessage
+                    }
+                }
             }
 
-            DeleteRequestResult.Failed -> Unit
+            DeleteRequestResult.Failed -> {
+                confirmDeleteItem = null
+            }
         }
     }
 
@@ -203,9 +277,17 @@ fun HomeFeedScreen(
                                 favouriteIds = uiState.favouriteIds,
                                 isMuted = uiState.isMuted,
                                 isFullScreenLandscape = isFullScreenLandscape,
-                                isPausedByOverlay = shareSheetItem != null,
+                                isClearMode = isClearMode && !isFullScreenLandscape,
+                                isPausedByOverlay = shareSheetItem != null ||
+                                    confirmDeleteItem != null ||
+                                    pendingDeleteItem != null,
                                 onEnterFullScreen = { onSetFullScreenLandscape(true) },
                                 onExitFullScreen = { onSetFullScreenLandscape(false) },
+                                onEnterClearMode = enterClearMode,
+                                onClearModeTap = {
+                                    showFirstTimeClearHint = false
+                                    clearModeRestoreTick++
+                                },
                                 onToggleFavourite = onToggleFavourite,
                                 onSetFavourite = onSetFavourite,
                                 onOpenShareSheet = { item -> shareSheetItem = item },
@@ -232,6 +314,12 @@ fun HomeFeedScreen(
                             PhotoVerticalFeed(
                                 photos = uiState.photos,
                                 favouriteIds = uiState.favouriteIds,
+                                isClearMode = isClearMode,
+                                onEnterClearMode = enterClearMode,
+                                onClearModeTap = {
+                                    showFirstTimeClearHint = false
+                                    clearModeRestoreTick++
+                                },
                                 onToggleFavourite = onToggleFavourite,
                                 onSetFavourite = onSetFavourite,
                                 onOpenShareSheet = { item -> shareSheetItem = item },
@@ -243,17 +331,20 @@ fun HomeFeedScreen(
             }
         }
 
-        // Centred "Videos" | "Images" switcher + top-right mute button (hidden in landscape full screen)
-        if (!isFullScreenLandscape) {
-            val activeFeedHasItems = when (feedMode) {
-                HomeFeedMode.VIDEOS -> uiState.videos.isNotEmpty()
-                HomeFeedMode.IMAGES -> uiState.photos.isNotEmpty()
-            }
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth(),
-            ) {
+        // Centred "Videos" | "Images" switcher + top-right mute button (hidden in landscape & clear mode)
+        val activeFeedHasItems = when (feedMode) {
+            HomeFeedMode.VIDEOS -> uiState.videos.isNotEmpty()
+            HomeFeedMode.IMAGES -> uiState.photos.isNotEmpty()
+        }
+        AnimatedVisibility(
+            visible = !isFullScreenLandscape && !isClearMode,
+            enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 HomeFeedTopBar(
                     selectedMode = feedMode,
                     onSelectMode = { nextMode ->
@@ -275,6 +366,25 @@ fun HomeFeedScreen(
                 }
             }
         }
+
+        // Clear mode bottom-right restore eye button (fades in on tap, auto-hides after 2 seconds)
+        ClearModeRestoreButton(
+            visible = isClearMode && !isFullScreenLandscape && clearModeRestoreVisible,
+            onExitClearMode = { onSetClearMode(false) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = spacing.md, bottom = 20.dp),
+        )
+
+        // One-time clear mode first-use hint pill
+        ClearModeHintBanner(
+            visible = isClearMode && !isFullScreenLandscape && showFirstTimeClearHint,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = spacing.md, vertical = spacing.xl),
+        )
 
         // Friendly delete confirmation message at the bottom
         DeletedStatusBanner(
@@ -302,63 +412,14 @@ fun HomeFeedScreen(
         )
     }
 
-    // Confirmation dialog fallback for Android 9 and below (API 24–28)
-    val confirmItem = legacyConfirmDeleteItem
-    if (confirmItem != null) {
-        AlertDialog(
-            onDismissRequest = { legacyConfirmDeleteItem = null },
-            containerColor = colors.surface,
-            titleContentColor = colors.textPrimary,
-            textContentColor = colors.textSecondary,
-            shape = MaterialTheme.shapes.medium,
-            title = {
-                Text(
-                    text = stringResource(
-                        if (confirmItem.type == MediaType.VIDEO) {
-                            R.string.feed_delete_video_title
-                        } else {
-                            R.string.feed_delete_photo_title
-                        },
-                    ),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            },
-            text = {
-                Text(
-                    text = stringResource(R.string.feed_delete_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            dismissButton = {
-                TextButton(onClick = { legacyConfirmDeleteItem = null }) {
-                    Text(
-                        text = stringResource(R.string.feed_delete_cancel),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textSecondary,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        legacyConfirmDeleteItem = null
-                        if (MediaFormatters.deleteDirectly(context, confirmItem)) {
-                            onMediaDeleted(confirmItem.id)
-                            deletedToastMessage = if (confirmItem.type == MediaType.VIDEO) {
-                                videoDeletedMessage
-                            } else {
-                                photoDeletedMessage
-                            }
-                        }
-                    },
-                ) {
-                    Text(
-                        text = stringResource(R.string.feed_delete_confirm),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textPrimary,
-                    )
-                }
-            },
+    // Confirmation card shown before deleting any video or photo (portrait & landscape)
+    val itemPendingConfirmation = confirmDeleteItem
+    if (itemPendingConfirmation != null) {
+        DeleteConfirmationDialog(
+            item = itemPendingConfirmation,
+            isLandscape = isFullScreenLandscape,
+            onDismiss = { confirmDeleteItem = null },
+            onConfirmDelete = { executeConfirmedDelete(itemPendingConfirmation) },
         )
     }
 }
@@ -369,9 +430,12 @@ internal fun VideoVerticalFeed(
     favouriteIds: Set<Long>,
     isMuted: Boolean,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     isPausedByOverlay: Boolean,
     onEnterFullScreen: () -> Unit,
     onExitFullScreen: () -> Unit,
+    onEnterClearMode: () -> Unit,
+    onClearModeTap: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
     onOpenShareSheet: (MediaItem) -> Unit,
@@ -410,6 +474,10 @@ internal fun VideoVerticalFeed(
     }
 
     val shouldPlayActive = isAppResumed && !isPausedByOverlay && (!isUserPaused || is2xSpeedActive)
+
+    // Keep the screen awake strictly while a video is actively playing; clear on pause/overlay/stop/release.
+    val keepScreenAwake = shouldPlayActive && playerPool.isAnyVideoPlaying
+    KeepScreenOnEffect(enabled = keepScreenAwake)
 
     // Synchronize the 2-player window whenever visible page, mute, pause, overlay, or lifecycle changes.
     LaunchedEffect(
@@ -484,6 +552,7 @@ internal fun VideoVerticalFeed(
             isPlaying = isCurrent && shouldPlayActive,
             isFavourite = item.id in favouriteIds,
             isFullScreenLandscape = isFullScreenLandscape,
+            isClearMode = isClearMode,
             isShareSheetOpen = isPausedByOverlay,
             hasPrevious = pageIndex > 0,
             hasNext = pageIndex < videos.lastIndex,
@@ -496,6 +565,8 @@ internal fun VideoVerticalFeed(
             onDoubleTapFavourite = { onSetFavourite(item.id, true) },
             onOpenShareSheet = { onOpenShareSheet(item) },
             onDelete = { onDelete(item) },
+            onEnterClearMode = onEnterClearMode,
+            onClearModeTap = onClearModeTap,
             onEnterFullScreen = onEnterFullScreen,
             onExitFullScreen = onExitFullScreen,
             onPrevious = {
@@ -523,6 +594,9 @@ internal fun VideoVerticalFeed(
 internal fun PhotoVerticalFeed(
     photos: List<MediaItem>,
     favouriteIds: Set<Long>,
+    isClearMode: Boolean,
+    onEnterClearMode: () -> Unit,
+    onClearModeTap: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
     onOpenShareSheet: (MediaItem) -> Unit,
@@ -558,10 +632,13 @@ internal fun PhotoVerticalFeed(
             item = item,
             isCurrentPage = isCurrent,
             isFavourite = item.id in favouriteIds,
+            isClearMode = isClearMode,
             onToggleFavourite = { onToggleFavourite(item.id) },
             onDoubleTapFavourite = { onSetFavourite(item.id, true) },
             onShare = { onOpenShareSheet(item) },
             onDelete = { onDelete(item) },
+            onEnterClearMode = onEnterClearMode,
+            onClearModeTap = onClearModeTap,
             onZoomedChanged = { zoomed ->
                 if (isCurrent) {
                     isCurrentPhotoZoomed = zoomed
@@ -569,6 +646,30 @@ internal fun PhotoVerticalFeed(
             },
         )
     }
+}
+
+@Composable
+private fun KeepScreenOnEffect(enabled: Boolean) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findHostActivity() }
+
+    DisposableEffect(activity, enabled) {
+        val window = activity?.window
+        if (enabled) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+}
+
+private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }
 
 @Composable

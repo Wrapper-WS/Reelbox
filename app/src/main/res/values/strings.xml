@@ -45,11 +45,14 @@
     <string name="feed_action_remove_favourite">Remove from favourites</string>
     <string name="feed_action_share">Share</string>
     <string name="feed_action_delete">Delete</string>
+    <string name="feed_action_clear_mode">Hide buttons</string>
+    <string name="feed_action_exit_clear_mode">Show buttons</string>
+    <string name="clear_mode_first_time_hint">Tap the screen to bring the buttons back</string>
     <string name="feed_action_mute">Mute sound</string>
     <string name="feed_action_unmute">Unmute sound</string>
     <string name="feed_delete_video_title">Delete this video?</string>
     <string name="feed_delete_photo_title">Delete this photo?</string>
-    <string name="feed_delete_body">This will remove it from your phone.</string>
+    <string name="feed_delete_body">It will be removed from your phone.</string>
     <string name="feed_delete_cancel">Cancel</string>
     <string name="feed_delete_confirm">Delete</string>
     <string name="feed_untitled_video">Video</string>

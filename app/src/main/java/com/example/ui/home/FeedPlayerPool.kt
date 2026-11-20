@@ -2,7 +2,10 @@ package com.example.ui.home
 
 import android.content.Context
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem as Media3MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -26,6 +29,9 @@ class FeedPlayerPool(context: Context) {
 
     private var currentMuted: Boolean = false
     private var released: Boolean = false
+
+    var isAnyVideoPlaying: Boolean by mutableStateOf(false)
+        private set
 
     fun playerFor(mediaId: Long): ExoPlayer? = players[mediaId]
 
@@ -92,6 +98,7 @@ class FeedPlayerPool(context: Context) {
                 }
             }
         }
+        updatePlayingState()
     }
 
     fun recoverOnForeground(activeMediaId: Long?, shouldPlayActive: Boolean) {
@@ -109,6 +116,7 @@ class FeedPlayerPool(context: Context) {
         }.onFailure {
             erroredVideoIds[activeMediaId] = true
         }
+        updatePlayingState()
     }
 
     fun setPlaybackSpeed(mediaId: Long, speed: Float) {
@@ -136,10 +144,12 @@ class FeedPlayerPool(context: Context) {
                 }
             }
         }
+        isAnyVideoPlaying = false
     }
 
     fun releaseAll() {
         released = true
+        isAnyVideoPlaying = false
         val allIds = players.keys.toList()
         for (id in allIds) {
             releasePlayer(id)
@@ -166,12 +176,18 @@ class FeedPlayerPool(context: Context) {
             override fun onPlayerError(error: PlaybackException) {
                 erroredVideoIds[item.id] = true
                 player.playWhenReady = false
+                updatePlayingState()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     erroredVideoIds.remove(item.id)
                 }
+                updatePlayingState()
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                updatePlayingState()
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -194,6 +210,7 @@ class FeedPlayerPool(context: Context) {
         }.onFailure {
             erroredVideoIds[item.id] = true
             player.playWhenReady = false
+            updatePlayingState()
         }
         return player
     }
@@ -209,6 +226,17 @@ class FeedPlayerPool(context: Context) {
         runCatching {
             player.playWhenReady = false
             player.release()
+        }
+        updatePlayingState()
+    }
+
+    private fun updatePlayingState() {
+        if (released) {
+            isAnyVideoPlaying = false
+            return
+        }
+        isAnyVideoPlaying = players.values.any { player ->
+            runCatching { player.isPlaying }.getOrDefault(false)
         }
     }
 }

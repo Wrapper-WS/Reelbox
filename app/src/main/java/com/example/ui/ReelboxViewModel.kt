@@ -40,12 +40,25 @@ class ReelboxViewModel(
 
     private var activeLoadJob: Job? = null
 
+    private data class StoredPrefs(
+        val hasRequestedPermission: Boolean,
+        val favouriteIds: Set<Long>,
+        val isMuted: Boolean,
+        val hasSeenClearModeHint: Boolean,
+    )
+
     private val prefsFlow = combine(
         favouritesRepository.hasRequestedPermission,
         favouritesRepository.favouriteIds,
         favouritesRepository.isMuted,
-    ) { hasRequested, favouriteIds, isMuted ->
-        Triple(hasRequested, favouriteIds, isMuted)
+        favouritesRepository.hasSeenClearModeHint,
+    ) { hasRequested, favouriteIds, isMuted, hasSeenClearModeHint ->
+        StoredPrefs(
+            hasRequestedPermission = hasRequested,
+            favouriteIds = favouriteIds,
+            isMuted = isMuted,
+            hasSeenClearModeHint = hasSeenClearModeHint,
+        )
     }
 
     private val selectedFoldersFlow = combine(
@@ -61,11 +74,11 @@ class ReelboxViewModel(
         snapshotFlow,
         prefsFlow,
         selectedFoldersFlow,
-    ) { permissionState, loadState, snapshot, (hasRequested, favouriteIds, isMuted), (photoBucket, videoBucket) ->
-        val favouriteItems = if (favouriteIds.isEmpty()) {
+    ) { permissionState, loadState, snapshot, prefs, (photoBucket, videoBucket) ->
+        val favouriteItems = if (prefs.favouriteIds.isEmpty()) {
             emptyList()
         } else {
-            snapshot.allMedia.filter { item -> item.id in favouriteIds }
+            snapshot.allMedia.filter { item -> item.id in prefs.favouriteIds }
         }
         val validPhotoBucket = photoBucket?.takeIf { bucket ->
             snapshot.photoAlbums.any { it.bucketId == bucket && it.photoCount > 0 }
@@ -75,14 +88,15 @@ class ReelboxViewModel(
         }
         ReelboxUiState(
             permissionState = permissionState,
-            hasRequestedPermission = hasRequested,
+            hasRequestedPermission = prefs.hasRequestedPermission,
             libraryLoadState = loadState,
             allMedia = snapshot.allMedia,
             videos = snapshot.videos,
             photos = snapshot.photos,
             favourites = favouriteItems,
-            favouriteIds = favouriteIds,
-            isMuted = isMuted,
+            favouriteIds = prefs.favouriteIds,
+            isMuted = prefs.isMuted,
+            hasSeenClearModeHint = prefs.hasSeenClearModeHint,
             albums = snapshot.albums,
             videoAlbums = snapshot.videoAlbums,
             photoAlbums = snapshot.photoAlbums,
@@ -186,6 +200,12 @@ class ReelboxViewModel(
         val nextMuted = !uiState.value.isMuted
         viewModelScope.launch {
             favouritesRepository.setMuted(nextMuted)
+        }
+    }
+
+    fun markClearModeHintSeen() {
+        viewModelScope.launch {
+            favouritesRepository.markClearModeHintSeen()
         }
     }
 

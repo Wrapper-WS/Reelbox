@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -239,7 +241,7 @@ private fun FeedModeTab(
 
 /**
  * Right-side vertical column of 48dp round action buttons:
- * Favourite (heart with bounce), Share, and Delete.
+ * Favourite (heart with bounce), Share, Delete, and Clear mode.
  */
 @Composable
 fun FeedActionRail(
@@ -247,10 +249,10 @@ fun FeedActionRail(
     onToggleFavourite: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
+    onEnterClearMode: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = ReelboxThemeTokens.colors
-    val spacing = ReelboxThemeTokens.spacing
     val view = LocalView.current
 
     val heartScale = remember { Animatable(1f) }
@@ -281,7 +283,7 @@ fun FeedActionRail(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(spacing.md),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         FeedRoundActionButton(
@@ -311,6 +313,73 @@ fun FeedActionRail(
             onClick = onDelete,
             testTag = "feed_action_delete",
         )
+        FeedRoundActionButton(
+            icon = Icons.Outlined.VisibilityOff,
+            contentDescription = stringResource(R.string.feed_action_clear_mode),
+            iconTint = colors.textPrimary,
+            onClick = onEnterClearMode,
+            testTag = "feed_action_clear_mode",
+        )
+    }
+}
+
+/**
+ * Small round eye button revealed briefly in the bottom-right corner when tapping in clear mode.
+ */
+@Composable
+fun ClearModeRestoreButton(
+    visible: Boolean,
+    onExitClearMode: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = ReelboxThemeTokens.colors
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+        exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+        modifier = modifier,
+    ) {
+        FeedRoundActionButton(
+            icon = Icons.Outlined.Visibility,
+            contentDescription = stringResource(R.string.feed_action_exit_clear_mode),
+            iconTint = colors.textPrimary,
+            onClick = onExitClearMode,
+            testTag = "clear_mode_exit_button",
+        )
+    }
+}
+
+/**
+ * One-time calm bottom hint shown the first time clear mode is enabled.
+ */
+@Composable
+fun ClearModeHintBanner(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = ReelboxThemeTokens.colors
+    val spacing = ReelboxThemeTokens.spacing
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+        exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+        modifier = modifier,
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = colors.surfaceRaised.copy(alpha = 0.92f),
+            border = BorderStroke(1.dp, colors.divider),
+            modifier = Modifier.testTag("clear_mode_hint_toast"),
+        ) {
+            Text(
+                text = stringResource(R.string.clear_mode_first_time_hint),
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textPrimary,
+                modifier = Modifier.padding(horizontal = spacing.lg, vertical = spacing.sm),
+            )
+        }
     }
 }
 
@@ -354,7 +423,7 @@ private fun FeedRoundActionButton(
 }
 
 /**
- * Bottom-left metadata overlay: filename (1 line, ellipsis) + date taken & file size.
+ * Bottom-left metadata overlay: filename (up to 2 lines, ellipsis) + date taken & file size.
  */
 @Composable
 fun FeedMetadataOverlay(
@@ -380,7 +449,7 @@ fun FeedMetadataOverlay(
             text = title,
             style = MaterialTheme.typography.titleSmall,
             color = colors.textPrimary,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag("feed_item_filename"),
         )

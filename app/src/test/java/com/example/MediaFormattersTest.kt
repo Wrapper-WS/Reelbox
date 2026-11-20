@@ -85,15 +85,39 @@ class MediaFormattersTest {
     }
 
     @Test
-    fun `displayTitle sanitizes multiline and very long names and falls back cleanly`() {
-        val multiline = sampleItem(displayName = "  Summer\nTrip\t2025.mp4  ")
-        assertEquals("Summer Trip 2025.mp4", MediaFormatters.displayTitle(context, multiline))
+    fun `displayTitle cleans underscores extensions and repeated spaces while preserving casing`() {
+        val showEpisode = sampleItem(displayName = "The_Spectacular_Spider-Man_S01E05.mp4")
+        assertEquals(
+            "The Spectacular Spider-Man S01E05",
+            MediaFormatters.displayTitle(context, showEpisode),
+        )
 
-        val veryLong = "a".repeat(500) + ".mp4"
-        assertEquals(veryLong, MediaFormatters.displayTitle(context, sampleItem(displayName = veryLong)))
+        val photoUpperExt = sampleItem(displayName = "IMG__2025_05__12.JPG", type = MediaType.PHOTO)
+        assertEquals("IMG 2025 05 12", MediaFormatters.displayTitle(context, photoUpperExt))
+
+        val mkvExtraSpaces = sampleItem(displayName = "  Summer\nTrip\t___  2025.mkv  ")
+        assertEquals("Summer Trip 2025", MediaFormatters.displayTitle(context, mkvExtraSpaces))
+
+        val randomId = sampleItem(displayName = "a8F2k9Q1z4.mp4")
+        assertEquals("a8F2k9Q1z4", MediaFormatters.displayTitle(context, randomId))
+
+        val randomNoExt = sampleItem(displayName = "x9k2m7p4")
+        assertEquals("x9k2m7p4", MediaFormatters.displayTitle(context, randomNoExt))
+
+        val nonExtensionDot = sampleItem(displayName = "Version_2.0.mp4")
+        assertEquals("Version 2.0", MediaFormatters.displayTitle(context, nonExtensionDot))
+
+        val veryLongStem = "a".repeat(500)
+        assertEquals(
+            veryLongStem,
+            MediaFormatters.displayTitle(context, sampleItem(displayName = "$veryLongStem.mp4")),
+        )
 
         val blankVideo = sampleItem(displayName = "   \n  ", type = MediaType.VIDEO)
         assertEquals("Video", MediaFormatters.displayTitle(context, blankVideo))
+
+        val underscoresOnly = sampleItem(displayName = "____.mp4", type = MediaType.VIDEO)
+        assertEquals("Video", MediaFormatters.displayTitle(context, underscoresOnly))
 
         val blankPhoto = sampleItem(displayName = "", type = MediaType.PHOTO)
         assertEquals("Photo", MediaFormatters.displayTitle(context, blankPhoto))

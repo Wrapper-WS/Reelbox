@@ -23,6 +23,7 @@ data class ReelboxUiState(
     val favourites: List<MediaItem> = emptyList(),
     val favouriteIds: Set<Long> = emptySet(),
     val isMuted: Boolean = false,
+    val hasSeenClearModeHint: Boolean = false,
     val albums: List<MediaAlbum> = emptyList(),
     val videoAlbums: List<MediaAlbum> = emptyList(),
     val photoAlbums: List<MediaAlbum> = emptyList(),

@@ -64,6 +64,18 @@ class FavouritesRepository(context: Context) {
             preferences[IS_MUTED_KEY] ?: false
         }
 
+    val hasSeenClearModeHint: Flow<Boolean> = dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { preferences ->
+            preferences[HAS_SEEN_CLEAR_MODE_HINT_KEY] ?: false
+        }
+
     suspend fun toggleFavourite(mediaId: Long) {
         val key = mediaId.toString()
         dataStore.edit { preferences ->
@@ -111,9 +123,16 @@ class FavouritesRepository(context: Context) {
         }
     }
 
+    suspend fun markClearModeHintSeen() {
+        dataStore.edit { preferences ->
+            preferences[HAS_SEEN_CLEAR_MODE_HINT_KEY] = true
+        }
+    }
+
     private companion object {
         val FAVOURITE_IDS_KEY = stringSetPreferencesKey("favourite_media_ids")
         val HAS_REQUESTED_PERMISSION_KEY = booleanPreferencesKey("has_requested_media_permission")
         val IS_MUTED_KEY = booleanPreferencesKey("feed_is_muted")
+        val HAS_SEEN_CLEAR_MODE_HINT_KEY = booleanPreferencesKey("has_seen_clear_mode_hint")
     }
 }

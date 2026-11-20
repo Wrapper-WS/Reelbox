@@ -1,6 +1,10 @@
 package com.example.ui.home
 
 import android.view.HapticFeedbackConstants
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -39,6 +43,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.MediaItem
 import com.example.ui.theme.ReelboxGradients
+import com.example.ui.theme.ReelboxMotion
 import com.example.ui.theme.ReelboxThemeTokens
 
 /**
@@ -50,10 +55,13 @@ fun ZoomablePhotoPage(
     item: MediaItem,
     isCurrentPage: Boolean,
     isFavourite: Boolean,
+    isClearMode: Boolean,
     onToggleFavourite: () -> Unit,
     onDoubleTapFavourite: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
+    onEnterClearMode: () -> Unit,
+    onClearModeTap: () -> Unit,
     onZoomedChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -89,13 +97,16 @@ fun ZoomablePhotoPage(
             .onSizeChanged { containerSize = it }
             .testTag("photo_feed_page_${item.id}"),
     ) {
-        val actionRailTopPadding = (maxHeight * 0.50f).coerceAtLeast(180.dp)
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(item.id) {
+                .pointerInput(item.id, isClearMode) {
                     detectTapGestures(
+                        onTap = {
+                            if (isClearMode) {
+                                onClearModeTap()
+                            }
+                        },
                         onLongPress = { offset ->
                             val viewportWidth = size.width.toFloat()
                             if (viewportWidth > 0f &&
@@ -174,47 +185,57 @@ fun ZoomablePhotoPage(
             )
         }
 
-        // Soft top gradient scrim for top tabs readability
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(132.dp)
-                .align(Alignment.TopCenter)
-                .background(ReelboxGradients.TopOverlayScrim),
-        )
+        AnimatedVisibility(
+            visible = !isClearMode,
+            enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                // Soft top gradient scrim for top tabs readability
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(132.dp)
+                        .align(Alignment.TopCenter)
+                        .background(ReelboxGradients.TopOverlayScrim),
+                )
 
-        // Soft bottom gradient scrim for metadata readability
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(196.dp)
-                .align(Alignment.BottomCenter)
-                .background(ReelboxGradients.BottomOverlayScrim),
-        )
+                // Soft bottom gradient scrim for metadata readability
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(196.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(ReelboxGradients.BottomOverlayScrim),
+                )
 
-        // Right-side action column starting from the middle of the screen going down
-        FeedActionRail(
-            isFavourite = isFavourite,
-            onToggleFavourite = onToggleFavourite,
-            onShare = onShare,
-            onDelete = onDelete,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = actionRailTopPadding, end = spacing.md),
-        )
+                // Right-side action column aligned at the bottom, level with the date & file size line
+                FeedActionRail(
+                    isFavourite = isFavourite,
+                    onToggleFavourite = onToggleFavourite,
+                    onShare = onShare,
+                    onDelete = onDelete,
+                    onEnterClearMode = onEnterClearMode,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = spacing.md, bottom = 20.dp),
+                )
 
-        // Bottom-left file name, date taken, and file size (kept clear of right buttons)
-        FeedMetadataOverlay(
-            item = item,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .padding(
-                    start = spacing.md,
-                    end = 84.dp,
-                    bottom = spacing.lg,
-                ),
-        )
+                // Bottom-left file name, date taken, and file size (kept clear of right buttons)
+                FeedMetadataOverlay(
+                    item = item,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(
+                            start = spacing.md,
+                            end = 84.dp,
+                            bottom = 20.dp,
+                        ),
+                )
+            }
+        }
 
         // Centre double-tap popping heart
         DoubleTapHeartOverlay(

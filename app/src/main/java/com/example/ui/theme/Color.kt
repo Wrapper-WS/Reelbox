@@ -15,6 +15,9 @@ val ReelboxDivider = Color(0xFF2A2A30)
 // Single accent — reserved strictly for favourite heart, active tab, and progress bar
 val ReelboxAccent = Color(0xFFFF5A36)
 
+// Soft destructive red — reserved strictly for the Delete confirmation button
+val ReelboxDestructive = Color(0xFFE5484D)
+
 // Neutral overlay & scrim tones
 val ReelboxOnLightButton = Color(0xFF0B0B0D)
 val ReelboxScrimDark = Color(0xD10B0B0D)
@@ -29,6 +32,7 @@ data class ReelboxExtendedColors(
     val textSecondary: Color = ReelboxTextSecondary,
     val divider: Color = ReelboxDivider,
     val accent: Color = ReelboxAccent,
+    val destructive: Color = ReelboxDestructive,
 )
 
 /**

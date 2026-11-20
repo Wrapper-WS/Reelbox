@@ -6,6 +6,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,17 +27,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,6 +53,9 @@ import com.example.R
 import com.example.data.MediaItem
 import com.example.data.MediaType
 import com.example.ui.ReelboxUiState
+import com.example.ui.home.ClearModeHintBanner
+import com.example.ui.home.ClearModeRestoreButton
+import com.example.ui.home.DeleteConfirmationDialog
 import com.example.ui.home.DeleteRequestResult
 import com.example.ui.home.DeletedStatusBanner
 import com.example.ui.home.MediaFormatters
@@ -59,6 +63,7 @@ import com.example.ui.home.PhotoVerticalFeed
 import com.example.ui.home.ShareBottomSheet
 import com.example.ui.home.ShareTargetResolver
 import com.example.ui.home.VideoVerticalFeed
+import com.example.ui.theme.ReelboxMotion
 import com.example.ui.theme.ReelboxThemeTokens
 import kotlinx.coroutines.delay
 
@@ -81,7 +86,10 @@ fun MediaViewerOverlay(
     session: MediaViewerSession,
     uiState: ReelboxUiState,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     onSetFullScreenLandscape: (Boolean) -> Unit,
+    onSetClearMode: (Boolean) -> Unit,
+    onMarkClearModeHintSeen: () -> Unit,
     onClose: () -> Unit,
     onToggleFavourite: (Long) -> Unit,
     onSetFavourite: (Long, Boolean) -> Unit,
@@ -90,7 +98,6 @@ fun MediaViewerOverlay(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val colors = ReelboxThemeTokens.colors
     val spacing = ReelboxThemeTokens.spacing
 
     val items = remember(
@@ -116,28 +123,60 @@ fun MediaViewerOverlay(
         }
     }
 
+    var confirmDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var pendingDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
-    var legacyConfirmDeleteItem by remember { mutableStateOf<MediaItem?>(null) }
     var deletedToastMessage by remember { mutableStateOf<String?>(null) }
     var shareSheetItem by remember { mutableStateOf<MediaItem?>(null) }
+
+    var clearModeRestoreVisible by remember { mutableStateOf(false) }
+    var clearModeRestoreTick by remember { mutableIntStateOf(0) }
+    var showFirstTimeClearHint by remember { mutableStateOf(false) }
 
     val videoDeletedMessage = stringResource(R.string.feed_video_deleted)
     val photoDeletedMessage = stringResource(R.string.feed_photo_deleted)
 
-    // Back button exits landscape first if in landscape, otherwise closes the viewer back to the grid.
+    val enterClearMode: () -> Unit = {
+        onSetClearMode(true)
+        if (!uiState.hasSeenClearModeHint) {
+            showFirstTimeClearHint = true
+            onMarkClearModeHintSeen()
+        }
+    }
+
+    // Back button exits landscape first, then exits clear mode, otherwise closes viewer back to grid.
     BackHandler {
-        if (isFullScreenLandscape) {
-            onSetFullScreenLandscape(false)
-        } else {
-            onClose()
+        when {
+            isFullScreenLandscape -> onSetFullScreenLandscape(false)
+            isClearMode -> onSetClearMode(false)
+            else -> onClose()
         }
     }
 
     // Close viewer cleanly if the last item in the filtered grid is deleted.
     LaunchedEffect(items.isEmpty()) {
         if (items.isEmpty()) {
+            onSetClearMode(false)
             onSetFullScreenLandscape(false)
             onClose()
+        }
+    }
+
+    LaunchedEffect(isClearMode, clearModeRestoreTick) {
+        if (!isClearMode || clearModeRestoreTick == 0) {
+            clearModeRestoreVisible = false
+            return@LaunchedEffect
+        }
+        clearModeRestoreVisible = true
+        delay(2_000L)
+        clearModeRestoreVisible = false
+    }
+
+    LaunchedEffect(isClearMode, showFirstTimeClearHint) {
+        if (!isClearMode) {
+            showFirstTimeClearHint = false
+        } else if (showFirstTimeClearHint) {
+            delay(3_000L)
+            showFirstTimeClearHint = false
         }
     }
 
@@ -171,8 +210,15 @@ fun MediaViewerOverlay(
     }
 
     val requestDeleteItem: (MediaItem) -> Unit = { item ->
+        if (confirmDeleteItem == null && pendingDeleteItem == null) {
+            confirmDeleteItem = item
+        }
+    }
+
+    val executeConfirmedDelete: (MediaItem) -> Unit = { item ->
         when (val outcome = MediaFormatters.prepareDeleteRequest(context, item)) {
             DeleteRequestResult.DeletedDirectly -> {
+                confirmDeleteItem = null
                 onMediaDeleted(item.id)
                 deletedToastMessage = if (item.type == MediaType.VIDEO) {
                     videoDeletedMessage
@@ -183,16 +229,27 @@ fun MediaViewerOverlay(
 
             is DeleteRequestResult.NeedsSystemConfirmation -> {
                 pendingDeleteItem = item
+                confirmDeleteItem = null
                 val request = IntentSenderRequest.Builder(outcome.intentSender).build()
                 runCatching { deleteResultLauncher.launch(request) }
                     .onFailure { pendingDeleteItem = null }
             }
 
             DeleteRequestResult.NeedsLegacyConfirmation -> {
-                legacyConfirmDeleteItem = item
+                confirmDeleteItem = null
+                if (MediaFormatters.deleteDirectly(context, item)) {
+                    onMediaDeleted(item.id)
+                    deletedToastMessage = if (item.type == MediaType.VIDEO) {
+                        videoDeletedMessage
+                    } else {
+                        photoDeletedMessage
+                    }
+                }
             }
 
-            DeleteRequestResult.Failed -> Unit
+            DeleteRequestResult.Failed -> {
+                confirmDeleteItem = null
+            }
         }
     }
 
@@ -201,7 +258,7 @@ fun MediaViewerOverlay(
             .fillMaxSize()
             .background(Color.Black)
             .then(
-                if (!isFullScreenLandscape) {
+                if (!isFullScreenLandscape && !isClearMode) {
                     Modifier.navigationBarsPadding()
                 } else {
                     Modifier
@@ -217,9 +274,17 @@ fun MediaViewerOverlay(
                         favouriteIds = uiState.favouriteIds,
                         isMuted = uiState.isMuted,
                         isFullScreenLandscape = isFullScreenLandscape,
-                        isPausedByOverlay = shareSheetItem != null,
+                        isClearMode = isClearMode && !isFullScreenLandscape,
+                        isPausedByOverlay = shareSheetItem != null ||
+                            confirmDeleteItem != null ||
+                            pendingDeleteItem != null,
                         onEnterFullScreen = { onSetFullScreenLandscape(true) },
                         onExitFullScreen = { onSetFullScreenLandscape(false) },
+                        onEnterClearMode = enterClearMode,
+                        onClearModeTap = {
+                            showFirstTimeClearHint = false
+                            clearModeRestoreTick++
+                        },
                         onToggleFavourite = onToggleFavourite,
                         onSetFavourite = onSetFavourite,
                         onOpenShareSheet = { item -> shareSheetItem = item },
@@ -232,6 +297,12 @@ fun MediaViewerOverlay(
                     PhotoVerticalFeed(
                         photos = items,
                         favouriteIds = uiState.favouriteIds,
+                        isClearMode = isClearMode,
+                        onEnterClearMode = enterClearMode,
+                        onClearModeTap = {
+                            showFirstTimeClearHint = false
+                            clearModeRestoreTick++
+                        },
                         onToggleFavourite = onToggleFavourite,
                         onSetFavourite = onSetFavourite,
                         onOpenShareSheet = { item -> shareSheetItem = item },
@@ -243,14 +314,20 @@ fun MediaViewerOverlay(
         }
 
         // Top controls in portrait: round Back button top-left + round Mute button top-right (videos)
-        if (!isFullScreenLandscape) {
+        AnimatedVisibility(
+            visible = !isFullScreenLandscape && !isClearMode,
+            enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter),
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .displayCutoutPadding()
-                    .padding(horizontal = spacing.md, vertical = spacing.xs)
-                    .align(Alignment.TopCenter),
+                    .padding(horizontal = spacing.md, vertical = spacing.xs),
             ) {
                 ViewerTopCircleButton(
                     icon = Icons.AutoMirrored.Outlined.ArrowBack,
@@ -278,6 +355,25 @@ fun MediaViewerOverlay(
             }
         }
 
+        // Clear mode bottom-right restore eye button (fades in on tap, auto-hides after 2 seconds)
+        ClearModeRestoreButton(
+            visible = isClearMode && !isFullScreenLandscape && clearModeRestoreVisible,
+            onExitClearMode = { onSetClearMode(false) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = spacing.md, bottom = 20.dp),
+        )
+
+        // One-time clear mode first-use hint pill
+        ClearModeHintBanner(
+            visible = isClearMode && !isFullScreenLandscape && showFirstTimeClearHint,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = spacing.md, vertical = spacing.xl),
+        )
+
         DeletedStatusBanner(
             message = deletedToastMessage,
             modifier = Modifier
@@ -302,62 +398,13 @@ fun MediaViewerOverlay(
         )
     }
 
-    val confirmItem = legacyConfirmDeleteItem
-    if (confirmItem != null) {
-        AlertDialog(
-            onDismissRequest = { legacyConfirmDeleteItem = null },
-            containerColor = colors.surface,
-            titleContentColor = colors.textPrimary,
-            textContentColor = colors.textSecondary,
-            shape = MaterialTheme.shapes.medium,
-            title = {
-                Text(
-                    text = stringResource(
-                        if (confirmItem.type == MediaType.VIDEO) {
-                            R.string.feed_delete_video_title
-                        } else {
-                            R.string.feed_delete_photo_title
-                        },
-                    ),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            },
-            text = {
-                Text(
-                    text = stringResource(R.string.feed_delete_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            dismissButton = {
-                TextButton(onClick = { legacyConfirmDeleteItem = null }) {
-                    Text(
-                        text = stringResource(R.string.feed_delete_cancel),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textSecondary,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        legacyConfirmDeleteItem = null
-                        if (MediaFormatters.deleteDirectly(context, confirmItem)) {
-                            onMediaDeleted(confirmItem.id)
-                            deletedToastMessage = if (confirmItem.type == MediaType.VIDEO) {
-                                videoDeletedMessage
-                            } else {
-                                photoDeletedMessage
-                            }
-                        }
-                    },
-                ) {
-                    Text(
-                        text = stringResource(R.string.feed_delete_confirm),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textPrimary,
-                    )
-                }
-            },
+    val itemPendingConfirmation = confirmDeleteItem
+    if (itemPendingConfirmation != null) {
+        DeleteConfirmationDialog(
+            item = itemPendingConfirmation,
+            isLandscape = isFullScreenLandscape,
+            onDismiss = { confirmDeleteItem = null },
+            onConfirmDelete = { executeConfirmedDelete(itemPendingConfirmation) },
         )
     }
 }

@@ -2,6 +2,11 @@ package com.example.ui.home
 
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -13,6 +18,7 @@ import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -36,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -48,6 +55,7 @@ import androidx.media3.ui.PlayerView
 import com.example.R
 import com.example.data.MediaItem
 import com.example.ui.theme.ReelboxGradients
+import com.example.ui.theme.ReelboxMotion
 import com.example.ui.theme.ReelboxThemeTokens
 import kotlinx.coroutines.delay
 
@@ -69,6 +77,7 @@ fun VideoFeedPage(
     isPlaying: Boolean,
     isFavourite: Boolean,
     isFullScreenLandscape: Boolean,
+    isClearMode: Boolean,
     isShareSheetOpen: Boolean,
     hasPrevious: Boolean,
     hasNext: Boolean,
@@ -77,6 +86,8 @@ fun VideoFeedPage(
     onDoubleTapFavourite: () -> Unit,
     onOpenShareSheet: () -> Unit,
     onDelete: () -> Unit,
+    onEnterClearMode: () -> Unit,
+    onClearModeTap: () -> Unit,
     onEnterFullScreen: () -> Unit,
     onExitFullScreen: () -> Unit,
     onPrevious: () -> Unit,
@@ -84,9 +95,13 @@ fun VideoFeedPage(
     onSpeedHoldChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val colors = ReelboxThemeTokens.colors
     val spacing = ReelboxThemeTokens.spacing
     val view = LocalView.current
+    val videoTitle = remember(item.id, item.displayName, item.type) {
+        MediaFormatters.displayTitle(context, item)
+    }
 
     var playIndicatorTrigger by remember(item.id) { mutableIntStateOf(0) }
     var doubleTapHeartTrigger by remember(item.id) { mutableIntStateOf(0) }
@@ -150,14 +165,34 @@ fun VideoFeedPage(
             .background(Color.Black)
             .testTag("video_feed_page_${item.id}"),
     ) {
-        val actionRailTopPadding = (maxHeight * 0.50f).coerceAtLeast(180.dp)
         val isWideVideo = aspectRatio >= WIDE_VIDEO_ASPECT_THRESHOLD
+        val renderedVideoHeight = if (isWideVideo && aspectRatio > 0f) {
+            (maxWidth / aspectRatio).coerceAtMost(maxHeight)
+        } else {
+            maxHeight
+        }
+
+        // Keep wide videos strictly clear of the 4-button right-side column (4*48 + 3*16 + 20 bottom + 8 buffer = 268dp)
+        val desiredWideVideoShift = if (isWideVideo && !isFullScreenLandscape && !isClearMode) {
+            val availableBelow = (maxHeight - renderedVideoHeight) / 2f
+            val neededBelow = 268.dp
+            val rawShift = (neededBelow - availableBelow).coerceAtLeast(0.dp)
+            val maxSafeUpwardShift = ((maxHeight - renderedVideoHeight) / 2f - 88.dp).coerceAtLeast(0.dp)
+            rawShift.coerceAtMost(maxSafeUpwardShift)
+        } else {
+            0.dp
+        }
+        val videoUpwardShift by animateDpAsState(
+            targetValue = desiredWideVideoShift,
+            animationSpec = tween(durationMillis = 200, easing = ReelboxMotion.EaseOut),
+            label = "wide_video_clear_shift",
+        )
 
         // Video viewport + unified tap, double-tap, edge 2x hold, and centre share hold gestures
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(item.id, hasPlaybackError, isFullScreenLandscape) {
+                .pointerInput(item.id, hasPlaybackError, isFullScreenLandscape, isClearMode) {
                     detectTapGestures(
                         onPress = {
                             try {
@@ -190,6 +225,11 @@ fun VideoFeedPage(
                                 if (landscapeControlsVisible) {
                                     controlsInteractionTick++
                                 }
+                            } else if (isClearMode) {
+                                onClearModeTap()
+                                if (!hasPlaybackError) {
+                                    onTogglePlayPause()
+                                }
                             } else if (!hasPlaybackError) {
                                 playIndicatorTrigger++
                                 onTogglePlayPause()
@@ -208,8 +248,8 @@ fun VideoFeedPage(
                 VideoPlaybackErrorView()
             } else {
                 AndroidView(
-                    factory = { context ->
-                        (LayoutInflater.from(context).inflate(
+                    factory = { ctx ->
+                        (LayoutInflater.from(ctx).inflate(
                             R.layout.reelbox_player_view,
                             null,
                             false,
@@ -225,7 +265,9 @@ fun VideoFeedPage(
                     onRelease = { playerView ->
                         playerView.player = null
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset(y = -videoUpwardShift),
                 )
             }
         }
@@ -233,6 +275,7 @@ fun VideoFeedPage(
         if (isFullScreenLandscape) {
             LandscapeVideoControls(
                 visible = landscapeControlsVisible && !is2xSpeedHeld,
+                title = videoTitle,
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 durationMs = durationMs,
@@ -259,84 +302,97 @@ fun VideoFeedPage(
                 },
             )
         } else {
-            // Soft top dark gradient scrim
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(132.dp)
-                    .align(Alignment.TopCenter)
-                    .background(ReelboxGradients.TopOverlayScrim),
-            )
+            AnimatedVisibility(
+                visible = !isClearMode,
+                enter = fadeIn(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                exit = fadeOut(tween(durationMillis = 200, easing = ReelboxMotion.EaseOut)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Soft top dark gradient scrim
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(132.dp)
+                            .align(Alignment.TopCenter)
+                            .background(ReelboxGradients.TopOverlayScrim),
+                    )
 
-            // Soft bottom dark gradient scrim
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(212.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(ReelboxGradients.BottomOverlayScrim),
-            )
+                    // Soft bottom dark gradient scrim
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(212.dp)
+                            .align(Alignment.BottomCenter)
+                            .background(ReelboxGradients.BottomOverlayScrim),
+                    )
 
-            // "Full screen" button centred underneath wide videos (>= 1.3 aspect ratio)
-            if (isWideVideo && !hasPlaybackError && isCurrentPage) {
-                val renderedVideoHeight = (maxWidth / aspectRatio).coerceAtMost(maxHeight)
-                val videoBottomY = (maxHeight + renderedVideoHeight) / 2f
-                val buttonTopY = (videoBottomY + 12.dp)
-                    .coerceIn(120.dp, (maxHeight - 124.dp).coerceAtLeast(120.dp))
+                    // "Full screen" button centred underneath wide videos (>= 1.3 aspect ratio)
+                    if (isWideVideo && !hasPlaybackError && isCurrentPage) {
+                        val containerHeight = this@BoxWithConstraints.maxHeight
+                        val videoBottomY = (containerHeight + renderedVideoHeight) / 2f - videoUpwardShift
+                        val buttonTopY = (videoBottomY + 12.dp)
+                            .coerceIn(120.dp, (containerHeight - 108.dp).coerceAtLeast(120.dp))
 
-                FullScreenPillButton(
-                    onClick = onEnterFullScreen,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = buttonTopY),
-                )
+                        FullScreenPillButton(
+                            onClick = onEnterFullScreen,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = buttonTopY),
+                        )
+                    }
+
+                    // Right-side vertical action column anchored just above the progress bar,
+                    // level with the date & file size line on the left.
+                    FeedActionRail(
+                        isFavourite = isFavourite,
+                        onToggleFavourite = onToggleFavourite,
+                        onShare = onOpenShareSheet,
+                        onDelete = onDelete,
+                        onEnterClearMode = onEnterClearMode,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = spacing.md, bottom = 20.dp),
+                    )
+
+                    // Bottom-left metadata (clear of right buttons and progress bar)
+                    FeedMetadataOverlay(
+                        item = item,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(
+                                start = spacing.md,
+                                end = 84.dp,
+                                bottom = 20.dp,
+                            ),
+                    )
+
+                    // Thin accent progress / scrub bar at the very bottom of the video
+                    if (!hasPlaybackError) {
+                        VideoScrubBar(
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            onSeekTo = { targetMs ->
+                                positionMs = targetMs
+                                player?.seekTo(targetMs)
+                            },
+                            onScrubStateChanged = { scrubbing ->
+                                isScrubbing = scrubbing
+                            },
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
+                    }
+                }
             }
 
-            // Right-side vertical action buttons starting from the middle going down
-            FeedActionRail(
-                isFavourite = isFavourite,
-                onToggleFavourite = onToggleFavourite,
-                onShare = onOpenShareSheet,
-                onDelete = onDelete,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = actionRailTopPadding, end = spacing.md),
-            )
-
-            // Bottom-left metadata (clear of right buttons and progress bar)
-            FeedMetadataOverlay(
-                item = item,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(
-                        start = spacing.md,
-                        end = 84.dp,
-                        bottom = 28.dp,
-                    ),
-            )
-
-            // Thin accent progress / scrub bar at the very bottom of the video
-            if (!hasPlaybackError) {
-                VideoScrubBar(
-                    positionMs = positionMs,
-                    durationMs = durationMs,
-                    onSeekTo = { targetMs ->
-                        positionMs = targetMs
-                        player?.seekTo(targetMs)
-                    },
-                    onScrubStateChanged = { scrubbing ->
-                        isScrubbing = scrubbing
-                    },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+            // Faint fading play indicator on tap in portrait (hidden in clear mode)
+            if (!isClearMode) {
+                TapPlayIndicatorOverlay(
+                    triggerId = playIndicatorTrigger,
+                    modifier = Modifier.align(Alignment.Center),
                 )
             }
-
-            // Faint fading play indicator on tap in portrait
-            TapPlayIndicatorOverlay(
-                triggerId = playIndicatorTrigger,
-                modifier = Modifier.align(Alignment.Center),
-            )
         }
 
         // Top-centre "2x speed" pill (works in both portrait and landscape)
